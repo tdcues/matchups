@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>9-Ball Matchup Optimizer</title>
+  <style>
+    body {
+      background-color: #121212;
+      color: #e0e0e0;
+      font-family: sans-serif;
+    }
+
+    select, input[type="number"], button {
+      background-color: #1e1e1e;
+      color: #ffffff;
+      border: 1px solid #444;
+      padding: 4px;
+      border-radius: 4px;
+    }
+
+    fieldset {
+      margin-bottom: 8px;
+      padding: 8px;
+      border: 1px solid #333;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+    }
+
+    th, td {
+      border: 1px solid #666;
+      padding: 6px;
+      text-align: center;
+    }
+
+    .override {
+      color: #ff6b6b;
+      font-weight: bold;
+    }
+
+    .legend span {
+      color: #ff6b6b;
+    }
+  </style>
+</head>
+<body>
+  <h2><img src="images/9-ball icon.png" alt="9-ball" width="24" height="24" style="vertical-align:middle;"> 9-Ball Matchup Optimizer</h2>
+  <form id="matchupForm">
+    <h3>Home Team</h3>
+    <div id="homeInputs"></div>
+
+    <h3>Visitor Team</h3>
+    <div id="visitorInputs"></div>
+
+    <button type="submit">Generate Matchups</button>
+  </form>
+
+  <table id="resultsTable" style="display: none">
+    <thead>
+      <tr><th>Match</th><th>Home Player</th><th>Home SL</th><th>Expected Win %</th><th>Visitor Player</th><th>Visitor SL</th></tr>
+    </thead>
+    <tbody></tbody>
+    <tfoot>
+      <tr class="totals"><td colspan="2">SL Totals</td><td id="totalHomeSL">0</td><td></td><td></td><td id="totalVisitorSL">0</td></tr>
+    </tfoot>
+  </table>
+
+  <div class="legend">
+    <p><span>Red Text</span> indicates a player manually assigned to a specific match number.</p>
+  </div>
+
+  <script>
+    const homePlayers = ["", "Tom", "Peter", "Steve", "David", "Mike", "Rob", "Linzay", "Alexis"];
+
+    const renderPlayerInputs = (containerId, prefix) => {
+      const container = document.getElementById(containerId);
+      container.innerHTML = "";
+      for (let i = 0; i < 8; i++) {
+        const nameField = prefix === "home" ? `<select name="${prefix}Name${i}">${homePlayers.map(p => `<option value="${p}">${p}</option>`).join("")}</select>` : `<input type="text" name="${prefix}Name${i}" placeholder="Visitor ${i + 1} Name" />`;
+        container.innerHTML += `
+          <fieldset>
+            ${nameField}
+            <input type="number" name="${prefix}SL${i}" placeholder="Skill Level" min="1" max="9" />
+            <input type="number" name="${prefix}Win${i}" placeholder="Win %" step="0.01" min="0" max="100" />
+            <input type="number" name="${prefix}PPM${i}" placeholder="PPM (0-20)" step="0.01" min="0" max="20" />
+            <input type="number" name="${prefix}Match${i}" placeholder="Match # (1-5, optional)" min="1" max="5" />
+          </fieldset>
+        `;
+      }
+    };
+
+    renderPlayerInputs("homeInputs", "home");
+    renderPlayerInputs("visitorInputs", "visitor");
+
+    document.getElementById("matchupForm").addEventListener("submit", function(e) {
+      e.preventDefault();
+      const formData = new FormData(this);
+      const home = [], visitor = [];
+
+      for (let i = 0; i < 8; i++) {
+        const hName = formData.get(`homeName${i}`);
+        const hSL = formData.get(`homeSL${i}`);
+        const hWin = formData.get(`homeWin${i}`);
+        const hPPM = formData.get(`homePPM${i}`);
+        if (hName && hSL && hWin) {
+          home.push({
+            name: hName,
+            sl: parseInt(hSL, 10),
+            win: parseFloat(hWin),
+            ppm: hPPM ? parseFloat(hPPM) : null,
+            match: formData.get(`homeMatch${i}`) ? parseInt(formData.get(`homeMatch${i}`)) : null
+          });
+        }
+        const vName = formData.get(`visitorName${i}`);
+        const vSL = formData.get(`visitorSL${i}`);
+        const vWin = formData.get(`visitorWin${i}`);
+        const vPPM = formData.get(`visitorPPM${i}`);
+        if (vName && vSL && vWin) {
+          visitor.push({
+            name: vName,
+            sl: parseInt(vSL, 10),
+            win: parseFloat(vWin),
+            ppm: vPPM ? parseFloat(vPPM) : null,
+            match: formData.get(`visitorMatch${i}`) ? parseInt(formData.get(`visitorMatch${i}`)) : null
+          });
+        }
+      }
+
+      const scores = [];
+      home.forEach(h => {
+        visitor.forEach(v => {
+          const winRatio = h.win + v.win > 0 ? h.win / (h.win + v.win) : 0.5;
+          const ppmRatio = h.ppm !== null && v.ppm !== null && h.ppm + v.ppm > 0 ? h.ppm / (h.ppm + v.ppm) : 0.5;
+          const slBias = 1 / (1 + Math.pow(1.1, v.sl - h.sl));
+          const expectedWin = Math.round(100 * (0.4 * winRatio + 0.3 * ppmRatio + 0.3 * slBias));
+          scores.push({
+            hName: h.name,
+            hSL: h.sl,
+            hMatch: h.match,
+            vName: v.name,
+            vSL: v.sl,
+            vMatch: v.match,
+            expectedWin
+          });
+        });
+      });
+
+      const matched = Array(5).fill(null);
+      const usedH = new Set();
+      const usedV = new Set();
+
+      scores.forEach(s => {
+        if (s.hMatch && s.vMatch && s.hMatch === s.vMatch) {
+          const index = s.hMatch - 1;
+          if (!matched[index] && !usedH.has(s.hName) && !usedV.has(s.vName)) {
+            matched[index] = s;
+            usedH.add(s.hName);
+            usedV.add(s.vName);
+          }
+        }
+      });
+
+      scores.sort((a, b) => b.expectedWin - a.expectedWin);
+
+      const getSLTotal = () => {
+        let hSL = 0, vSL = 0;
+        matched.forEach(m => {
+          if (m) {
+            hSL += m.hSL;
+            vSL += m.vSL;
+          }
+        });
+        return { hSL, vSL };
+      };
+
+      for (const s of scores) {
+        if (!usedH.has(s.hName) && !usedV.has(s.vName)) {
+          for (let i = 0; i < 5; i++) {
+            if (!matched[i]) {
+              const { hSL, vSL } = getSLTotal();
+              if (hSL + s.hSL <= 23 && vSL + s.vSL <= 23) {
+                matched[i] = s;
+                usedH.add(s.hName);
+                usedV.add(s.vName);
+                break;
+              }
+            }
+          }
+        }
+      }
+
+      const tbody = document.querySelector("#resultsTable tbody");
+      tbody.innerHTML = matched.map((m, i) => m ? `
+        <tr>
+          <td>${i + 1}</td>
+          <td class="${m.hMatch === i + 1 ? 'override' : ''}">${m.hName}</td>
+          <td>${m.hSL}</td>
+          <td>${m.expectedWin.toFixed(1)}</td>
+          <td class="${m.vMatch === i + 1 ? 'override' : ''}">${m.vName}</td>
+          <td>${m.vSL}</td>
+        </tr>` : `<tr><td>${i + 1}</td><td colspan="5">No matchup</td></tr>`
+      ).join("");
+
+      const { hSL, vSL } = getSLTotal();
+      document.getElementById("totalHomeSL").textContent = hSL;
+      document.getElementById("totalVisitorSL").textContent = vSL;
+      document.getElementById("resultsTable").style.display = "table";
+    });
+  </script>
+</body>
+</html>
